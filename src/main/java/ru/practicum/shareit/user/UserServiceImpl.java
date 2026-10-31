@@ -1,7 +1,9 @@
 package ru.practicum.shareit.user;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import ru.practicum.shareit.exception.ConflictException;
 import ru.practicum.shareit.exception.NotFoundException;
 import ru.practicum.shareit.exception.ValidationException;
@@ -9,99 +11,63 @@ import ru.practicum.shareit.user.dto.UserDto;
 
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
-
-    private final UserStorage userStorage;
+    private final UserRepository userRepository;
 
     @Override
-    public UserDto addUser(UserDto userDto) {
-
-        validateUser(userDto);
-
-        if (userStorage.existsByEmail(userDto.getEmail())) {
+    @Transactional
+    public UserDto addUser(UserDto dto) {
+        validateEmail(dto.getEmail());
+        if (userRepository.existsByEmailIgnoreCase(dto.getEmail())) {
             throw new ConflictException("Пользователь с таким email уже существует");
         }
-
-        if (userDto.getName() == null || userDto.getName().isBlank()) {
-            userDto.setName(userDto.getEmail());
-        }
-
-        User user = UserMapper.toModel(userDto);
-
-        return UserMapper.toDto(userStorage.save(user));
+        String name = dto.getName() == null || dto.getName().isBlank() ? dto.getEmail() : dto.getName();
+        User user = User.builder().name(name).email(dto.getEmail()).build();
+        log.info("Создание пользователя с email={}", dto.getEmail());
+        return UserMapper.toDto(userRepository.save(user));
     }
 
     @Override
-    public UserDto updateUser(Long userId, UserDto userDto) {
-
-        User existingUser = userStorage.findById(userId);
-
-        if (existingUser == null) {
-            throw new NotFoundException("Пользователь с id " + userId + " не найден");
-        }
-
-        if (userDto.getEmail() != null) {
-
-            if (userDto.getEmail().isBlank() || !userDto.getEmail().contains("@")) {
-                throw new ValidationException("Некорректный email");
-            }
-
-            if (userStorage.existsByEmailAndNotId(userDto.getEmail(), userId)) {
-
+    @Transactional
+    public UserDto updateUser(Long userId, UserDto dto) {
+        User user = userRepository.findById(userId).orElseThrow(() -> new NotFoundException("Пользователь с id " + userId + " не найден"));
+        if (dto.getEmail() != null) {
+            validateEmail(dto.getEmail());
+            if (userRepository.existsByEmailIgnoreCaseAndIdNot(dto.getEmail(), userId)) {
                 throw new ConflictException("Пользователь с таким email уже существует");
             }
-
-            existingUser.setEmail(userDto.getEmail());
+            user.setEmail(dto.getEmail());
         }
-
-        if (userDto.getName() != null) {
-            existingUser.setName(userDto.getName());
+        if (dto.getName() != null) {
+            if (dto.getName().isBlank()) throw new ValidationException("Имя не может быть пустым");
+            user.setName(dto.getName());
         }
-
-        userStorage.update(existingUser);
-
-        return UserMapper.toDto(existingUser);
+        return UserMapper.toDto(userRepository.save(user));
     }
 
     @Override
     public UserDto getUserById(Long userId) {
-
-        User user = userStorage.findById(userId);
-
-        if (user == null) {
-            throw new NotFoundException("Пользователь с id " + userId + " не найден");
-        }
-
-        return UserMapper.toDto(user);
+        return UserMapper.toDto(userRepository.findById(userId).orElseThrow(() -> new NotFoundException("Пользователь с id " + userId + " не найден")));
     }
 
     @Override
     public List<UserDto> getUsers() {
-
-        return userStorage.findAll().stream().map(UserMapper::toDto).toList();
-    }
-
-    private void validateUser(UserDto userDto) {
-
-        if (userDto.getEmail() == null || userDto.getEmail().isBlank()) {
-
-            throw new ValidationException("Email не может быть пустым");
-        }
-
-        if (!userDto.getEmail().contains("@")) {
-            throw new ValidationException("Некорректный email");
-        }
+        return userRepository.findAll().stream().map(UserMapper::toDto).toList();
     }
 
     @Override
+    @Transactional
     public void deleteUser(Long userId) {
-
-        if (!userStorage.existsById(userId)) {
+        if (!userRepository.existsById(userId))
             throw new NotFoundException("Пользователь с id " + userId + " не найден");
-        }
+        userRepository.deleteById(userId);
+    }
 
-        userStorage.delete(userId);
+    private void validateEmail(String email) {
+        if (email == null || email.isBlank()) throw new ValidationException("Email не может быть пустым");
+        if (!email.contains("@")) throw new ValidationException("Некорректный email");
     }
 }
